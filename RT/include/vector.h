@@ -7,102 +7,94 @@
 #include <array>
 #include <cmath>
 
+
+
 template<class TScalarType>
-class vector2 {
-public:
-    vector2() = default;
-    vector2(TScalarType x, TScalarType y) {
-        m_data[0] = x;
-        m_data[1] = y;
-    }
+struct vector2
+{
+	TScalarType e[2];
 
-    ~vector2() = default;
 
-    const TScalarType magnitude() const {return sqrt(m_data[0]*m_data[0] + m_data[1]*m_data[1]);}
+	inline constexpr vector2() { }
+	inline constexpr vector2(const vector2 & v) { for (int i = 0; i < 2; ++i) e[i] = v.e[i]; }
+	inline constexpr vector2(const TScalarType & v) { for (int i = 0; i < 2; ++i) e[i] = v; }
 
-    const TScalarType x() const{ return m_data[0]; }
+	template<typename val, typename... vals, std::enable_if_t<(sizeof...(vals) > 0), int> = 0>
+	inline constexpr vector2(const val v, const vals... vs) : e { (TScalarType)v, (TScalarType)vs... } { }
 
-    const TScalarType y() const{ return m_data[1]; }
+	inline constexpr TScalarType magnitude() const { return std::sqrt(e[0] * e[0] + e[1] * e[1]); }
 
-    TScalarType& x() { return m_data[0]; }
+	inline const TScalarType& x() const { return e[0]; }
+	inline const TScalarType& y() const { return e[1]; }
 
-    TScalarType& y() { return m_data[1]; }
-    TScalarType* data() { return m_data.data(); };
+	inline TScalarType& x() { return e[0]; }
+	inline TScalarType& y() { return e[1]; }
 
-    vector2 operator +(const vector2& rhs) const{
-        return vector2(x() + rhs.x(), y() + rhs.y());
-    }
-private:
-    std::array<TScalarType, 2> m_data;
+	inline constexpr vector2 operator+(const vector2& rhs) const { return vector2(x() + rhs.x(), y() + rhs.y()); }
+	inline constexpr vector2 operator-(const vector2& rhs) const { return vector2(x() - rhs.x(), y() - rhs.y()); }
+
+	inline constexpr vector2& operator+=(const vector2& rhs) { e[0] += rhs.e[0]; e[1] += rhs.e[1]; return *this; }
+	inline constexpr vector2& operator-=(const vector2& rhs) { e[0] -= rhs.e[0]; e[1] -= rhs.e[1]; return *this; }
+
+	inline constexpr vector2 operator*(const TScalarType rhs) const { return vector3(x() * rhs, y() * rhs); }
+	inline constexpr vector2 operator/(const TScalarType rhs) const { const TScalarType inv = 1 / rhs; return vector3(x() * inv, y() * inv); }
 };
+
 
 template <class TScalarType>
-class vector3 {
-public:
-    vector3() = default;
-    vector3(TScalarType x, TScalarType y, TScalarType z) {
-        m_data[0] = x;
-        m_data[1] = y;
-        m_data[2] = z;
-    }
+struct vector3
+{
+	TScalarType e[3];
 
-    ~vector3() = default;
 
-    const TScalarType magnitude() const{return std::sqrt(m_data[0]*m_data[0] + m_data[1]*m_data[1] + m_data[2]*m_data[2]);}
+	inline constexpr vector3() { }
+	inline constexpr vector3(const vector3 & v) { for (int i = 0; i < 3; ++i) e[i] = v.e[i]; }
+	inline constexpr vector3(const TScalarType & v) { for (int i = 0; i < 3; ++i) e[i] = v; }
 
-    const TScalarType x() const { return m_data[0]; }
+	template<typename val, typename... vals, std::enable_if_t<(sizeof...(vals) > 0), int> = 0>
+	inline constexpr vector3(const val v, const vals... vs) : e { (TScalarType)v, (TScalarType)vs... } { }
 
-    const TScalarType y() const { return m_data[1]; }
+	inline constexpr TScalarType magnitude() const { return std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]); }
 
-    const TScalarType z() const { return m_data[2]; }
+	inline const TScalarType x() const { return e[0]; }
+	inline const TScalarType y() const { return e[1]; }
+	inline const TScalarType z() const { return e[2]; }
 
-    TScalarType& x() { return m_data[0]; }
+	inline TScalarType& x() { return e[0]; }
+	inline TScalarType& y() { return e[1]; }
+	inline TScalarType& z() { return e[2]; }
 
-    TScalarType& y() { return m_data[1]; }
+	inline constexpr vector3 operator+(const vector3& rhs) const { return vector3(x() + rhs.x(), y() + rhs.y(), z() + rhs.z()); }
+	inline constexpr vector3 operator-(const vector3& rhs) const { return vector3(x() - rhs.x(), y() - rhs.y(), z() - rhs.z()); }
 
-    TScalarType& z() { return m_data[2]; }
+	inline constexpr vector3& operator+=(const vector3& rhs) { e[0] += rhs.e[0]; e[1] += rhs.e[1]; e[2] += rhs.e[2]; return *this; }
+	inline constexpr vector3& operator-=(const vector3& rhs) { e[0] -= rhs.e[0]; e[1] -= rhs.e[1]; e[2] -= rhs.e[2]; return *this; }
 
-    TScalarType* data() { return m_data.data(); };
-
-    const vector3& operator+=(const vector3& rhs){
-        m_data[0] += rhs.x();
-        m_data[1] += rhs.y();
-        m_data[2] += rhs.z();
-        return *this;
-    }
-
-    const vector3 operator *(const TScalarType rhs) const{
-        return vector3(rhs*x(), rhs*y(), rhs*z());
-    }
-
-    const vector3 operator +(const vector3& rhs) const{
-        return vector3(rhs.x() + x(), rhs.y() + y(), rhs.z() + z());
-    }
-
-    const vector3 operator -(const vector3& rhs) const{
-        return vector3(x() - rhs.x(), y() - rhs.y(), z() - rhs.z());
-    }
-
-private:
-    std::array<TScalarType, 3> m_data;
+	inline constexpr vector3 operator*(const TScalarType rhs) const { return vector3(x() * rhs, y() * rhs, z() * rhs); }
+	inline constexpr vector3 operator/(const TScalarType rhs) const { const TScalarType inv = 1 / rhs; return vector3(x() * inv, y() * inv, z() * inv); }
 };
 
-template<class TScalarType>
-TScalarType dot(const vector3<TScalarType> &a, const vector3<TScalarType> &b) {
-    return b.x()*a.x() + b.y()*a.y() + b.z()*a.z();
-}
 
 template<class TScalarType>
-vector3<TScalarType> cross(const vector3<TScalarType> &a, const vector3<TScalarType> &b) {
-    return vector3<TScalarType>(b.y()*a.z() - a.y()*b.z(), -(b.x() * a.z() - a.x()*b.z()), b.x() * a.y() - a.x()*b.y());
+TScalarType dot(const vector3<TScalarType>& a, const vector3<TScalarType>& b)
+{
+	return a.x() * b.x() + a.y() * b.y() + a.z() * b.z();
 }
 
-/*
-vector2<TScalarType> dot(const vector2<TScalarType> &a,const vector2<TScalarType> &b) {
-    return vector2(b.x() + a.x(), b.x() + a.y());
+
+template<class TScalarType>
+vector3<TScalarType> cross(const vector3<TScalarType>& a, const vector3<TScalarType>& b)
+{
+	// TODO check this
+	return vector3<TScalarType>(
+		  b.y() * a.z() - a.y() * b.z(),
+		-(b.x() * a.z() - a.x() * b.z()),
+		  b.x() * a.y() - a.x() * b.y());
 }
-*/
+
+
 using vec2f = vector2<float>;
-using vec2d = vector2<double>;
 using vec3f = vector3<float>;
+
+using vec2d = vector2<double>;
 using vec3d = vector3<double>;
