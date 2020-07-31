@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <iostream>
 
 #include "vector.h"
 #include "pcg32.h"
@@ -26,7 +27,7 @@ struct ray
 
 struct scene_object
 {
-	vec3f color;
+	virtual vec3f get_color() const = 0;
 
 	virtual ~scene_object() = default;
 
@@ -47,6 +48,10 @@ struct sphere : public scene_object
 
     inline void set_radius(const float radius)  {m_radius = radius;}
     inline void set_origin(const float origin) {m_origin = origin;}
+
+    vec3f get_color() const override{
+        return m_color;
+    }
 
     float intersect(const ray& r) const override{
         //Use geometric version of ray sphere intersection
@@ -98,7 +103,9 @@ struct sphere : public scene_object
     }
 
     virtual vec3f get_normal(const vec3f& p_surface) const{
-        return vec3f{0.0f,0.0f,0.0f};
+        vec3f surface_normal = p_surface - m_origin;
+        surface_normal.normalize();
+        return surface_normal;
     }
 private:
     float m_radius{0};
@@ -205,8 +212,12 @@ vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int w
     const auto scene_hit = world_ptr->nearest_intersection(r);
     const auto obj = scene_hit.first;
     const auto obj_t = scene_hit.second;
-    if(obj)
-        return obj->color;
+    if(obj) {
+        const auto surface_pt = r.o + r.d * obj_t;
+        const auto norm = obj->get_normal(surface_pt);
+        const auto intensity = dot(r.d * -1, norm);
+        return obj->get_color() * intensity;
+    }
 	return 0;
 }
 
@@ -245,7 +256,7 @@ int main(int argc, char* argv[])
 	const int num_samples = 1 << 8;
     constexpr vec3f origin(0,0,0);
     constexpr vec3f default_color(0.5f,0.5f,0.5f);
-	const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(10.0f, origin, default_color);
+	const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(3.0f, origin, default_color);
 
 	//pcg32 rng;
     std::unique_ptr<world> world_container = std::make_unique<world>();

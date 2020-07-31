@@ -55,6 +55,7 @@ struct vector3
 	inline constexpr vector3(const val v, const vals... vs) : e { (TScalarType)v, (TScalarType)vs... } { }
 
 	inline constexpr TScalarType magnitude() const { return std::sqrt(e[0] * e[0] + e[1] * e[1] + e[2] * e[2]); }
+	inline constexpr void normalize() {const auto inverse_mag = 1/magnitude(); e[0]*=inverse_mag; e[1]*=inverse_mag; e[2]*=inverse_mag;}
 
 	inline const TScalarType x() const { return e[0]; }
 	inline const TScalarType y() const { return e[1]; }
