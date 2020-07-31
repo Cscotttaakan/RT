@@ -85,11 +85,10 @@ TScalarType dot(const vector3<TScalarType>& a, const vector3<TScalarType>& b)
 template<class TScalarType>
 vector3<TScalarType> cross(const vector3<TScalarType>& a, const vector3<TScalarType>& b)
 {
-	// TODO check this
 	return vector3<TScalarType>(
-		  b.y() * a.z() - a.y() * b.z(),
-		-(b.x() * a.z() - a.x() * b.z()),
-		  b.x() * a.y() - a.x() * b.y());
+		  a.y() * b.z() - b.y() * a.z(),
+		-(a.x() * b.z() - b.x() * a.z()),
+		  a.x() * b.y() - b.x() * a.y());
 }
 
 

@@ -14,8 +14,9 @@
 
 constexpr float pi = 3.1415926535897932384626433832795f;
 constexpr vec3f world_up = { 0, 1, 0 };
-
-
+namespace intersect {
+    constexpr float no_hit = -1;
+}
 
 struct ray
 {
@@ -36,7 +37,73 @@ struct scene_object
 
 struct sphere : public scene_object
 {
+    inline constexpr sphere() = default;
+    inline constexpr sphere(float radius, vec3f origin, vec3f color) : m_radius(radius), m_origin(origin), m_color(color){}
+    inline constexpr sphere(float radius) : m_radius(radius){}
+    ~sphere() = default;
 
+    inline const float get_radius() const {return m_radius;}
+    inline const vec3f get_origin() const {return m_origin;}
+
+    inline void set_radius(const float radius)  {m_radius = radius;}
+    inline void set_origin(const float origin) {m_origin = origin;}
+
+    float intersect(const ray& r) const override{
+        //Use geometric version of ray sphere intersection
+        //This is the base of the right triangle with sides origin_ray-origin_sphere
+        //ray_origin to sphere line bisect point
+        //Define points Or (ray origin), Os(sphere origin).
+        //Cast a ray into the sphere
+        //Define points (A, B, C) for A first intersect, C for second intersect, B as the midpoint
+        //Between A and C.
+        //Define a line segment with starting point and end point in order AB, OrB, etc.
+        //Iffy definitions but ok
+        //
+
+        //Find length from ray origin to sphere origin
+        //Set ray origin is world origin
+
+        const auto Or = r.o;
+        const auto Os = m_origin;
+        const auto OrOs = Os - Or;
+
+        //Take dot product ray direction, to get component length, or length from Or to midpoint B
+        const auto OrB_scalar = dot(OrOs,r.d);
+
+        //Behind
+        if(OrB_scalar < 0)
+            return intersect::no_hit;
+
+        const auto OsOr_scalar_squared = dot(OrOs,OrOs);
+        const auto OrB_scalar_squared = OrB_scalar * OrB_scalar;
+        const auto OsB_scalar_squared = OsOr_scalar_squared - OrB_scalar_squared;
+
+
+        //Find length from bisect point to intersect point
+        //Notice that OsA, OsB is just the radius of the sphere
+        //We can calculate AB now or the point of intersection to midpoint
+        const auto OsA_scalar = m_radius;
+        const auto OsA_scalar_squared = OsA_scalar * OsA_scalar;
+        const auto OsAOsB_squared_difference = OsA_scalar_squared - OsB_scalar_squared;
+
+        //If short leg of right triangle is larger than radius, miss
+        if(OsAOsB_squared_difference < 0)
+            return intersect::no_hit;
+        const auto AB_scalar = sqrt(OsAOsB_squared_difference);
+
+        //return closest to ray origin
+        return OrB_scalar - AB_scalar;
+
+
+    }
+
+    virtual vec3f get_normal(const vec3f& p_surface) const{
+        return vec3f{0.0f,0.0f,0.0f};
+    }
+private:
+    float m_radius{0};
+    vec3f m_origin{0.0f,0.0f,0.0f};
+    vec3f m_color{0.5f,0.5f,0.5f};
 };
 
 
@@ -50,7 +117,13 @@ struct world
 		float t_min = 10000000;
 		scene_object* obj_min = nullptr;
 		//Loop over all objects calling intersect, if distance > 0 && distance < t_min, update t_min and object min
-
+        for(const auto& obj : objects){
+            const auto t_int = obj->intersect(r);
+            if(t_int > 0 && t_int < t_min){
+                t_min = t_int;
+                obj_min = obj;
+            }
+        }
 		return { obj_min,t_min };
 	}
 };
@@ -106,7 +179,7 @@ inline float randomized_halton(int s, int d, const int pixel_idx)
 }
 
 
-vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height)
+vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world const * world_ptr)
 {
 	const int pixel_idx = pixel_y * width + pixel_x;
 	const vec2f pixel =
@@ -115,7 +188,7 @@ vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int w
 		      randomized_halton(sample_idx, 1, pixel_idx));
 	const float time = randomized_halton(sample_idx, 2, pixel_idx);
 
-	const vec3f pinhole_pos{ 2.0f,4.0f,1.0f };
+	const vec3f pinhole_pos{ 10.0f,10.0f,10.0f };
 	const vec3f camera_dir = pinhole_pos * (-1.0f / pinhole_pos.magnitude());
 	const vec3f camera_right = cross(camera_dir, world_up);
 	const vec3f camera_up = cross(camera_right, camera_dir);
@@ -126,33 +199,41 @@ vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int w
 	const vec3f x_vec = camera_right * (sensor_width / width);
 	const vec3f y_vec = camera_up * (-sensor_height / height);
 	const vec3f sensor_pos = sensor_tlc + x_vec * pixel.x() + y_vec * pixel.y();
-	const vec3f sensor_dir = pinhole_pos - sensor_pos;
+	const vec3f sensor_dir = sensor_pos - pinhole_pos;
 
 	const ray r = { sensor_pos, sensor_dir * (1 / sensor_dir.magnitude()) };
-
+    const auto scene_hit = world_ptr->nearest_intersection(r);
+    const auto obj = scene_hit.first;
+    const auto obj_t = scene_hit.second;
+    if(obj)
+        return obj->color;
 	return 0;
 }
 
 
-vec3f image_function(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height)
+vec3f image_function(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world* const world_ptr)
 {
 #if 0
 	const vec2f pixel = vec2f{ (float)pixel_x,(float)pixel_y } + vec2f{ halton(sample_idx, 0), halton(sample_idx,1) };
 	const float time = halton(sample_idx, 2);
 #else
+	/*
 	const int pixel_idx = pixel_y * width + pixel_x;
 	const vec2f pixel =
 		vec2f((float)pixel_x,(float)pixel_y) +
 		vec2f(randomized_halton(sample_idx, 0 ,pixel_idx),
 		      randomized_halton(sample_idx, 1, pixel_idx));
-	const float time = randomized_halton(sample_idx, 2, pixel_idx);
+	//const float time = randomized_halton(sample_idx, 2, pixel_idx);
+	 */
 #endif
+/*
 	float circle = vec2f(pixel.x() - width / 2 + (time - 0.5f) * 240, pixel.y() - height / 2).magnitude();
 	float r = circle > height / 4 ? 0.0f : 1.0f;
 	float g = r;
 	float b = r;
+ */
 
-	return vec3f(r, g, b);
+	return raytrace(pixel_x, pixel_y, sample_idx, width, height, world_ptr);
 }
 
 
@@ -162,8 +243,13 @@ int main(int argc, char* argv[])
 	const int height = 512;
 	const int channels = 3;
 	const int num_samples = 1 << 8;
+    constexpr vec3f origin(0,0,0);
+    constexpr vec3f default_color(0.5f,0.5f,0.5f);
+	const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(10.0f, origin, default_color);
 
 	//pcg32 rng;
+    std::unique_ptr<world> world_container = std::make_unique<world>();
+    world_container->objects.push_back(obj1.get());
 
 	uint8_t* const pixels = new uint8_t[width * height * channels];
 
@@ -175,7 +261,7 @@ int main(int argc, char* argv[])
 			vec3f sum = 0;
 			for (int s = 0; s < num_samples; ++s)
 			{
-				const vec3f color_linear = image_function(i, j, s, width, height);
+				const vec3f color_linear = raytrace(i, j, s, width, height, world_container.get());
 				sum += color_linear;
 			}
 			const vec3f color_linear = sum / num_samples;
@@ -195,7 +281,7 @@ int main(int argc, char* argv[])
 		}
 	}
 
-	stbi_write_png("64_sample_rqmc_motion_blur.png", width, height, channels, pixels, width * channels);
+	stbi_write_png("rt.png", width, height, channels, pixels, width * channels);
 
 	delete [] pixels;
 
