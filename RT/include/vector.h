@@ -65,6 +65,8 @@ struct vector3
 	inline TScalarType& y() { return e[1]; }
 	inline TScalarType& z() { return e[2]; }
 
+	inline constexpr vector3 operator-() const { return vector3(-x(), -y(), -z()); }
+
 	inline constexpr vector3 operator+(const vector3& rhs) const { return vector3(x() + rhs.x(), y() + rhs.y(), z() + rhs.z()); }
 	inline constexpr vector3 operator-(const vector3& rhs) const { return vector3(x() - rhs.x(), y() - rhs.y(), z() - rhs.z()); }
 

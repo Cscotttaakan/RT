@@ -3,19 +3,25 @@
 //
 
 #include <algorithm>
+#include <atomic>
 #include <vector>
 #include <iostream>
 #include <thread>
 
 #include "vector.h"
+#include "spectrum.h"
+
 #include "pcg32.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
 
-constexpr float pi = 3.1415926535897932384626433832795f;
+constexpr float float_pi = 3.1415926535897932384626433832795f;
+constexpr float float_twopi = 6.283185307179586476925286766559f;
+constexpr float ray_eps = 3e-5f;
 constexpr vec3f world_up = { 0, 1, 0 };
+
 namespace intersect {
     constexpr float no_hit = -1;
 }
@@ -28,9 +34,12 @@ struct ray
 
 struct scene_object
 {
-	virtual vec3f get_color() const = 0;
+    scene_object() = default;
+    scene_object(const spectrum& albedo_, const spectrum& emission_) : albedo(albedo_), emission(emission_) { }
+    virtual ~scene_object() = default;
 
-	virtual ~scene_object() = default;
+    spectrum albedo = 0;
+    spectrum emission = 0;
 
 	virtual float intersect(const ray& r) const = 0;
 	virtual vec3f get_normal(const vec3f& p_surface) const = 0;
@@ -39,10 +48,10 @@ struct scene_object
 
 struct sphere : public scene_object
 {
-    inline constexpr sphere() = default;
-    inline constexpr sphere(float radius, vec3f origin, vec3f color) : m_radius(radius), m_origin(origin), m_color(color){}
-    inline constexpr sphere(float radius) : m_radius(radius){}
-    ~sphere() = default;
+    inline sphere() = default;
+    inline sphere(const spectrum& albedo_, const spectrum& emission_, float radius, const vec3f& origin) : scene_object(albedo_, emission_), m_radius(radius), m_origin(origin) { }
+    inline sphere(float radius) : m_radius(radius){}
+    virtual ~sphere() = default;
 
     inline const float get_radius() const {return m_radius;}
     inline const vec3f get_origin() const {return m_origin;}
@@ -50,68 +59,29 @@ struct sphere : public scene_object
     inline void set_radius(const float radius)  {m_radius = radius;}
     inline void set_origin(const float origin) {m_origin = origin;}
 
-    vec3f get_color() const override{
-        return m_color;
+    float intersect(const ray& r) const override
+    {
+        const vec3f s = r.o - m_origin;
+        const float b = dot(s, r.d);
+        const float c = dot(s, s) - m_radius * m_radius;
+
+        const float discriminant = b * b - c;
+        if (discriminant < 0)
+            return -1;
+
+        // Compute both roots and return the nearest one that's > 0
+        const float t1 = -b - std::sqrt(discriminant);
+        const float t2 = -b + std::sqrt(discriminant);
+        return (t1 >= 3e-5f) ? t1 : t2;
     }
 
-    float intersect(const ray& r) const override{
-        //Use geometric version of ray sphere intersection
-        //This is the base of the right triangle with sides origin_ray-origin_sphere
-        //ray_origin to sphere line bisect point
-        //Define points Or (ray origin), Os(sphere origin).
-        //Cast a ray into the sphere
-        //Define points (A, B, C) for A first intersect, C for second intersect, B as the midpoint
-        //Between A and C.
-        //Define a line segment with starting point and end point in order AB, OrB, etc.
-        //Iffy definitions but ok
-        //
-
-        //Find length from ray origin to sphere origin
-        //Set ray origin is world origin
-
-        const auto Or = r.o - m_origin;
-        const auto Os = m_origin - m_origin;
-        const auto OrOs = Os - Or;
-
-        //Take dot product ray direction, to get component length, or length from Or to midpoint B
-        const auto OrB_scalar = dot(OrOs,r.d);
-
-        //Behind
-        if(OrB_scalar < 0)
-            return intersect::no_hit;
-
-        const auto OsOr_scalar_squared = dot(OrOs,OrOs);
-        const auto OrB_scalar_squared = OrB_scalar * OrB_scalar;
-        const auto OsB_scalar_squared = OsOr_scalar_squared - OrB_scalar_squared;
-
-
-        //Find length from bisect point to intersect point
-        //Notice that OsA, OsB is just the radius of the sphere
-        //We can calculate AB now or the point of intersection to midpoint
-        const auto OsA_scalar = m_radius;
-        const auto OsA_scalar_squared = OsA_scalar * OsA_scalar;
-        const auto OsAOsB_squared_difference = OsA_scalar_squared - OsB_scalar_squared;
-
-        //If short leg of right triangle is larger than radius, miss
-        if(OsAOsB_squared_difference < 0)
-            return intersect::no_hit;
-        const auto AB_scalar = sqrt(OsAOsB_squared_difference);
-
-        //return closest to ray origin
-        return OrB_scalar - AB_scalar;
-
-
-    }
-
-    virtual vec3f get_normal(const vec3f& p_surface) const{
-        vec3f surface_normal = p_surface - m_origin;
-        surface_normal.normalize();
-        return surface_normal;
+    virtual vec3f get_normal(const vec3f& p_surface) const override
+    {
+        return (p_surface - m_origin) / m_radius;
     }
 private:
-    float m_radius{0};
-    vec3f m_origin{0.0f,0.0f,0.0f};
-    vec3f m_color{0.5f,0.5f,0.5f};
+    float m_radius = 1;
+    vec3f m_origin = 0;
 };
 
 
@@ -127,7 +97,7 @@ struct world
 		//Loop over all objects calling intersect, if distance > 0 && distance < t_min, update t_min and object min
         for(const auto& obj : objects){
             const auto t_int = obj->intersect(r);
-            if(t_int > 0 && t_int < t_min){
+            if(t_int > ray_eps && t_int < t_min){
                 t_min = t_int;
                 obj_min = obj;
             }
@@ -187,7 +157,7 @@ inline float randomized_halton(int s, int d, const int pixel_idx)
 }
 
 
-vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world const * world_ptr)
+vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world * const world_ptr)
 {
 	const int pixel_idx = pixel_y * width + pixel_x;
 	const vec2f pixel =
@@ -200,7 +170,7 @@ vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int w
 	const vec3f camera_dir = pinhole_pos * (-1.0f / pinhole_pos.magnitude());
 	const vec3f camera_right = cross(camera_dir, world_up);
 	const vec3f camera_up = cross(camera_right, camera_dir);
-	const float fov = 80 * pi / 180;
+	const float fov = 80 * float_pi / 180;
 	const float sensor_width = 2 * tanf(fov / 2);
 	const float sensor_height = sensor_width * (float)height / width;
 	const vec3f sensor_tlc = pinhole_pos + camera_dir - camera_right * (sensor_width / 2) + camera_up * (sensor_height / 2);
@@ -217,111 +187,227 @@ vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int w
         const auto surface_pt = r.o + r.d * obj_t;
         const auto norm = obj->get_normal(surface_pt);
         const auto intensity = dot(r.d * -1, norm);
-        return obj->get_color() * intensity;
+        //return obj->albedo * intensity;
+        return intensity;
     }
 	return 0;
 }
 
 
-vec3f image_function(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world* const world_ptr)
+vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world * const world_ptr, pcg32 * rng)
 {
-#if 0
-	const vec2f pixel = vec2f{ (float)pixel_x,(float)pixel_y } + vec2f{ halton(sample_idx, 0), halton(sample_idx,1) };
-	const float time = halton(sample_idx, 2);
-#else
-	/*
-	const int pixel_idx = pixel_y * width + pixel_x;
-	const vec2f pixel =
-		vec2f((float)pixel_x,(float)pixel_y) +
-		vec2f(randomized_halton(sample_idx, 0 ,pixel_idx),
-		      randomized_halton(sample_idx, 1, pixel_idx));
-	//const float time = randomized_halton(sample_idx, 2, pixel_idx);
-	 */
-#endif
-/*
-	float circle = vec2f(pixel.x() - width / 2 + (time - 0.5f) * 240, pixel.y() - height / 2).magnitude();
-	float r = circle > height / 4 ? 0.0f : 1.0f;
-	float g = r;
-	float b = r;
- */
+    constexpr int max_bounces = 32;
 
-	return raytrace(pixel_x, pixel_y, sample_idx, width, height, world_ptr);
+    const int pixel_idx = pixel_y * width + pixel_x;
+    const vec2f pixel =
+        vec2f((float)pixel_x,(float)pixel_y) +
+        vec2f(rng->nextFloat(), rng->nextFloat());
+    //const float time = randomized_halton(sample_idx, 2, pixel_idx);
+
+    const vec3f pinhole_pos{ 10.0f,5.0f,10.0f };
+    const vec3f camera_dir = pinhole_pos * (-1.0f / pinhole_pos.magnitude());
+    const vec3f camera_right = cross(camera_dir, world_up);
+    const vec3f camera_up = cross(camera_right, camera_dir);
+    const float fov = 30 * float_pi / 180;
+    const float sensor_width = 2 * tanf(fov / 2);
+    const float sensor_height = sensor_width * (float)height / width;
+    const vec3f sensor_tlc = pinhole_pos + camera_dir - camera_right * (sensor_width / 2) + camera_up * (sensor_height / 2);
+    const vec3f x_vec = camera_right * (sensor_width / width);
+    const vec3f y_vec = camera_up * (-sensor_height / height);
+    const vec3f sensor_pos = sensor_tlc + x_vec * pixel.x() + y_vec * pixel.y();
+    const vec3f sensor_dir = sensor_pos - pinhole_pos;
+
+    ray r = { sensor_pos, sensor_dir * (1 / sensor_dir.magnitude()) };
+    spectrum radiance = 0;
+    spectrum throughput = 1;
+    //int dim = 2;
+
+    if (pixel_x == width / 2 && pixel_y == height / 2)
+        int blahhhhh = 666;
+
+    for (int i = 0; i < max_bounces; ++i)
+    {
+        const auto scene_hit = world_ptr->nearest_intersection(r);
+
+        const scene_object * const obj = scene_hit.first;
+        const float obj_t = scene_hit.second;
+
+        if (!obj)
+            break;
+
+        const vec3f surface_pt = r.o + r.d * obj_t;
+        const vec3f normal = obj->get_normal(surface_pt);
+
+        radiance += throughput * obj->emission; // Add the emission term from the rendering equation
+
+        const vec3f w_i = -r.d;
+
+        const float n_dot_w_i = dot(normal, w_i);
+
+        if (n_dot_w_i < 0)
+            break;
+
+        // Add in estimate of reflected light (attenuate for next bounce's emission):
+        // Step 1: Get uniform reflection vector in same hemi sphere as normal
+
+        // From Global Illumination Compendium, eq 33.
+        const float r1 = rng->nextFloat(); // [0,1)
+        const float r2 = rng->nextFloat();
+        const float k = 2 * std::sqrt(r2 * (1 - r2));
+        const float phi = float_twopi * r1;
+        vec3f random_dir(
+            k * std::cos(phi),
+            1 - 2 * r2,
+            k * std::sin(phi)
+        );
+
+        // Flip if in wrong hemisphere.
+        const float n_dot_w_o = dot(random_dir, normal);
+        if (n_dot_w_o < 0)
+            random_dir = -random_dir;
+        // Step 2: Weight the throughput by BRDF * cos / p.
+
+        // w = BRDF * cos / p
+        // = (albedo/pi) * cos / (1 / 2pi)
+        const spectrum weight = (obj->albedo / float_pi) * std::fabs(n_dot_w_o) * float_twopi;
+        throughput *= weight;
+
+        // Time for some Russian roulette!
+        const float max_weight = std::max(std::max(weight.x(), weight.y()), weight.z());
+        const float rr_live_p = std::min(1.0f, max_weight);
+        if (rng->nextFloat() > rr_live_p)
+            break;
+        else
+            throughput *= (1 / rr_live_p);
+
+        // Start tracing from the new point.
+        r.o = surface_pt;
+        r.d = random_dir;
+    }
+
+    return vec3f(radiance.x(), radiance.y(), radiance.z());
+
+    //const auto scene_hit = world_ptr->nearest_intersection(r);
+    //const auto obj = scene_hit.first;
+    //const auto obj_t = scene_hit.second;
+    //if(obj) {
+    //    const auto surface_pt = r.o + r.d * obj_t;
+    //    const auto norm = obj->get_normal(surface_pt);
+    //    const auto intensity = dot(r.d * -1, norm);
+    //    return obj->albedo * intensity;
+    //}
+    //return 0;
+}
+
+void ThreadFunc(const int thread_id, pcg32 * rng, const int width, const int height, std::atomic<int>* curr_block, world* const world_container, uint8_t* const pixels)
+{
+    constexpr int block_size = 16;
+    const int num_samples = 1 << 8;
+
+    rng->seed(thread_id + 1337); // Don't pass 0 as rng seed.
+
+    //Initialize blocks
+    while(true)
+    {
+        const int x_blocks = (width + block_size - 1) / block_size; // Round up the number of blocks.
+        const int y_blocks = (height + block_size - 1) / block_size;
+
+        const int block_idx = curr_block->fetch_add(1);
+
+        if (block_idx >= x_blocks * y_blocks)
+            return;
+
+        const int block_y  = block_idx / x_blocks;
+        const int block_x  = block_idx - x_blocks * block_y; // Equiv to block_idx % x_blocks.
+        const int block_x0 = block_x * block_size, block_x1 = std::min(block_x0 + block_size, width);
+        const int block_y0 = block_y * block_size, block_y1 = std::min(block_y0 + block_size, height);
+
+        for (int j = block_x0; j < block_x1; ++j)
+        for (int i = block_y0; i < block_y1; ++i)
+        {
+            vec3f sum = 0;
+            for (int s = 0; s < num_samples; ++s) {
+                const vec3f color_linear = pathtrace(i, j, s, width, height, world_container, rng);
+                sum += color_linear;
+            }
+            const vec3f color_linear = sum / num_samples;
+
+            const vec3f color_gamma(
+                powf(color_linear.x(), 1 / 2.2f),
+                powf(color_linear.y(), 1 / 2.2f),
+                powf(color_linear.z(), 1 / 2.2f));
+
+            const int ir = std::max(0, std::min(255, int(256 * color_gamma.x())));
+            const int ig = std::max(0, std::min(255, int(256 * color_gamma.y())));
+            const int ib = std::max(0, std::min(255, int(256 * color_gamma.z())));
+            const int index = width * j + i;
+            pixels[index * 3 + 0] = ir;
+            pixels[index * 3 + 1] = ig;
+            pixels[index * 3 + 2] = ib;
+        }
+    }
 }
 
 
 int main(int argc, char* argv[])
 {
-	const int width = 512;
+	const int width  = 512;
 	const int height = 512;
 	const int channels = 3;
 	const int num_samples = 1 << 8;
-    constexpr vec3f origin(0,0,0);
-    constexpr vec3f default_color(0.5f,0.5f,0.5f);
-	const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(3.0f, vec3f{1.0f,1.0f,1.0f}, default_color);
 
-	//pcg32 rng;
+    constexpr vec3f origin(0,0,0);
+
+    //std::unique_ptr<sphere>
+    
+    const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(
+        spectrum{0.85f, 0.25f, 0.05f}, // albedo
+        spectrum{0.0f}, // emission
+        3.0f, // radius
+        origin
+        );
+
+    const std::unique_ptr<sphere> obj2 = std::make_unique<sphere>(
+        spectrum(0.85f), // albedo
+        spectrum{0.0f}, // emission
+        1.0f, // radius
+        vec3f{ 0, 4, 0 }
+    );
+
+    const std::unique_ptr<sphere> obj3 = std::make_unique<sphere>(
+        spectrum(0), // albedo
+        spectrum{1.0f}, // emission
+        30.0f, // radius
+        vec3f{ 0, 40, 0 }
+    );
+
     std::unique_ptr<world> world_container = std::make_unique<world>();
     world_container->objects.push_back(obj1.get());
+    world_container->objects.push_back(obj2.get());
+    world_container->objects.push_back(obj3.get());
 
-	uint8_t* const pixels = new uint8_t[width * height * channels];
+	std::vector<uint8_t> pixels(width * height * channels);
+
     std::atomic<int> curr_block(0);
-	const int num_threads = std::thread::hardware_concurrency();
+
+    const int num_threads = std::thread::hardware_concurrency();
 	std::vector<std::thread> threads;
-	threads.reserve(num_threads);
-	constexpr int block_size = 16;
-    const auto start_time = std::chrono::
+    std::vector<pcg32> rngs(num_threads);
+    threads.reserve(num_threads);
+
+    constexpr int block_size = 16;
+    //const auto start_time = std::chrono::
 	for(int thread_id = 0; thread_id < num_threads; ++thread_id) {
-	    threads.push_back(std::thread([&]() {
-	        //Initialize blocks
-            while(true) {
-                constexpr int x_blocks = (width + block_size - 1) / block_size; // Round up the number of blocks.
-                constexpr int y_blocks = (height + block_size - 1) / block_size;
+        // void ThreadFunc(const int thread_id, pcg32 * rng, const int width, const int height, std::atomic<int>* curr_block, world* const world_container, uint8_t* const pixels)
 
-                const int block_idx = curr_block.fetch_add(1);
-
-                if (block_idx >= x_blocks * y_blocks)
-                    return;
-
-
-                const int block_y  = block_idx / x_blocks;
-                const int block_x  = block_idx - x_blocks * block_y; // Equiv to block_idx % x_blocks.
-                const int block_x0 = block_x * block_size, block_x1 = std::min(block_x0 + block_size, width);
-                const int block_y0 = block_y * block_size, block_y1 = std::min(block_y0 + block_size, height);
-
-                for (int j = block_x0; j < block_x1; ++j) {
-                    for (int i = block_y0; i < block_y1; ++i) {
-                        vec3f sum = 0;
-                        for (int s = 0; s < num_samples; ++s) {
-                            const vec3f color_linear = raytrace(i, j, s, width, height, world_container.get());
-                            sum += color_linear;
-                        }
-                        const vec3f color_linear = sum / num_samples;
-
-                        const vec3f color_gamma(
-                                powf(color_linear.x(), 1 / 2.2f),
-                                powf(color_linear.y(), 1 / 2.2f),
-                                powf(color_linear.z(), 1 / 2.2f));
-
-                        const int ir = std::max(0, std::min(255, int(256 * color_gamma.x())));
-                        const int ig = std::max(0, std::min(255, int(256 * color_gamma.y())));
-                        const int ib = std::max(0, std::min(255, int(256 * color_gamma.z())));
-                        const int index = width * j + i;
-                        pixels[index * 3 + 0] = ir;
-                        pixels[index * 3 + 1] = ig;
-                        pixels[index * 3 + 2] = ib;
-                    }
-                }
-            }
-        }));
+	    threads.push_back(std::thread(ThreadFunc, thread_id, &rngs[thread_id], width, height, &curr_block, world_container.get(), &pixels[0]));
     }
 
 	for(auto& t : threads){
 	    t.join();
 	}
 
-	stbi_write_png("rt.png", width, height, channels, pixels, width * channels);
-
-	delete [] pixels;
+	stbi_write_png("rt.png", width, height, channels, &pixels[0], width * channels);
 
 	return 0;
 }
