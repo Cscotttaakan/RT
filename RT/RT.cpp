@@ -19,7 +19,7 @@
 
 constexpr float float_pi = 3.1415926535897932384626433832795f;
 constexpr float float_twopi = 6.283185307179586476925286766559f;
-constexpr float ray_eps = 3e-5f;
+constexpr float ray_eps = 5e-5f;
 constexpr vec3f world_up = { 0, 1, 0 };
 
 namespace intersect {
@@ -40,6 +40,8 @@ struct scene_object
 
     spectrum albedo = 0;
     spectrum emission = 0;
+    float ior = 1.55f;
+    bool mirror = false;
 
 	virtual float intersect(const ray& r) const = 0;
 	virtual vec3f get_normal(const vec3f& p_surface) const = 0;
@@ -201,11 +203,13 @@ vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int 
     const int pixel_idx = pixel_y * width + pixel_x;
     const vec2f pixel =
         vec2f((float)pixel_x,(float)pixel_y) +
-        vec2f(rng->nextFloat(), rng->nextFloat());
-    //const float time = randomized_halton(sample_idx, 2, pixel_idx);
+        vec2f(
+            randomized_halton(sample_idx, 0, pixel_idx),
+            randomized_halton(sample_idx, 1, pixel_idx));
 
-    const vec3f pinhole_pos{ 10.0f,5.0f,10.0f };
-    const vec3f camera_dir = pinhole_pos * (-1.0f / pinhole_pos.magnitude());
+    const vec3f pinhole_pos{ 10.0f,8.0f,10.0f };
+    vec3f camera_dir = -pinhole_pos + vec3f{ 0, 3, 0};
+    camera_dir.normalize();
     const vec3f camera_right = cross(camera_dir, world_up);
     const vec3f camera_up = cross(camera_right, camera_dir);
     const float fov = 30 * float_pi / 180;
@@ -220,7 +224,7 @@ vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int 
     ray r = { sensor_pos, sensor_dir * (1 / sensor_dir.magnitude()) };
     spectrum radiance = 0;
     spectrum throughput = 1;
-    //int dim = 2;
+    int dim = 2;
 
     if (pixel_x == width / 2 && pixel_y == height / 2)
         int blahhhhh = 666;
@@ -247,35 +251,51 @@ vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int 
         if (n_dot_w_i < 0)
             break;
 
+        // HACK
+        const float r0 = 0.02f;
+        const float fresnel = r0 + (1 - r0) * std::pow(1 - n_dot_w_i, 5.0f);
+
+        const bool use_mirror = rng->nextFloat() < fresnel;
+
         // Add in estimate of reflected light (attenuate for next bounce's emission):
-        // Step 1: Get uniform reflection vector in same hemi sphere as normal
+        vec3f random_dir;
+        spectrum weight;
+        if (obj->mirror && use_mirror)
+        {
+            random_dir = normal * (2 * dot(normal, w_i)) - w_i;
+            weight = 1;
+        }
+        else
+        {
+            // Step 1: Get uniform reflection vector in same hemi sphere as normal
 
-        // From Global Illumination Compendium, eq 33.
-        const float r1 = rng->nextFloat(); // [0,1)
-        const float r2 = rng->nextFloat();
-        const float k = 2 * std::sqrt(r2 * (1 - r2));
-        const float phi = float_twopi * r1;
-        vec3f random_dir(
-            k * std::cos(phi),
-            1 - 2 * r2,
-            k * std::sin(phi)
-        );
+            // From Global Illumination Compendium, eq 33.
+            const float r1 = randomized_halton(sample_idx, dim++, pixel_idx); // [0,1)
+            const float r2 = randomized_halton(sample_idx, dim++, pixel_idx);
+            const float k = 2 * std::sqrt(r2 * (1 - r2));
+            const float phi = float_twopi * r1;
+            random_dir = vec3f(
+                k * std::cos(phi),
+                1 - 2 * r2,
+                k * std::sin(phi)
+            );
 
-        // Flip if in wrong hemisphere.
-        const float n_dot_w_o = dot(random_dir, normal);
-        if (n_dot_w_o < 0)
-            random_dir = -random_dir;
-        // Step 2: Weight the throughput by BRDF * cos / p.
+            // Flip if in wrong hemisphere.
+            const float n_dot_w_o = dot(random_dir, normal);
+            if (n_dot_w_o < 0)
+                random_dir = -random_dir;
+            // Step 2: Weight the throughput by BRDF * cos / p.
 
-        // w = BRDF * cos / p
-        // = (albedo/pi) * cos / (1 / 2pi)
-        const spectrum weight = (obj->albedo / float_pi) * std::fabs(n_dot_w_o) * float_twopi;
-        throughput *= weight;
+            // w = BRDF * cos / p
+            // = (albedo/pi) * cos / (1 / 2pi)
+            weight = (obj->albedo / float_pi) * std::fabs(n_dot_w_o) * float_twopi;
+            throughput *= weight;
+        }
 
         // Time for some Russian roulette!
         const float max_weight = std::max(std::max(weight.x(), weight.y()), weight.z());
         const float rr_live_p = std::min(1.0f, max_weight);
-        if (rng->nextFloat() > rr_live_p)
+        if (randomized_halton(sample_idx, dim++, pixel_idx) > rr_live_p)
             break;
         else
             throughput *= (1 / rr_live_p);
@@ -309,7 +329,7 @@ void ThreadFunc(const int thread_id, pcg32 * rng, const int width, const int hei
     //Initialize blocks
     while(true)
     {
-        const int x_blocks = (width + block_size - 1) / block_size; // Round up the number of blocks.
+        const int x_blocks = (width  + block_size - 1) / block_size; // Round up the number of blocks.
         const int y_blocks = (height + block_size - 1) / block_size;
 
         const int block_idx = curr_block->fetch_add(1);
@@ -359,55 +379,76 @@ int main(int argc, char* argv[])
     constexpr vec3f origin(0,0,0);
 
     //std::unique_ptr<sphere>
-    
-    const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(
-        spectrum{0.85f, 0.25f, 0.05f}, // albedo
-        spectrum{0.0f}, // emission
-        3.0f, // radius
-        origin
+
+
+    const int num_frames = 30;
+
+    for (int frame = 0; frame < num_frames; ++frame)
+    {
+        std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(
+            spectrum{0.85f, 0.25f, 0.05f}, // albedo
+            spectrum{0.0f}, // emission
+            3.0f, // radius
+            origin
+            );
+        obj1->mirror = true;
+
+        const float a = frame * float_twopi / num_frames;
+        std::unique_ptr<sphere> obj2 = std::make_unique<sphere>(
+            spectrum(0.85f), // albedo
+            spectrum{0.0f}, // emission
+            1.0f, // radius
+            vec3f{ 0, 5, 0 } + vec3f{ std::cos(a), std::sin(a), 0 }
+        );
+        obj2->mirror = true;
+
+        const std::unique_ptr<sphere> obj3 = std::make_unique<sphere>(
+            spectrum(0), // albedo
+            spectrum{1.0f}, // emission
+            30.0f, // radius
+            vec3f{ 0, 40, 0 }
         );
 
-    const std::unique_ptr<sphere> obj2 = std::make_unique<sphere>(
-        spectrum(0.85f), // albedo
-        spectrum{0.0f}, // emission
-        1.0f, // radius
-        vec3f{ 0, 4, 0 }
-    );
+        std::unique_ptr<sphere> obj4 = std::make_unique<sphere>(
+            spectrum(0.85f), // albedo
+            spectrum{0.0f}, // emission
+            1.0f, // radius
+            vec3f{ 0, 4, 0 }
+        );
+        obj2->mirror = true;
 
-    const std::unique_ptr<sphere> obj3 = std::make_unique<sphere>(
-        spectrum(0), // albedo
-        spectrum{1.0f}, // emission
-        30.0f, // radius
-        vec3f{ 0, 40, 0 }
-    );
+        std::unique_ptr<world> world_container = std::make_unique<world>();
+        world_container->objects.push_back(obj1.get());
+        world_container->objects.push_back(obj2.get());
+        world_container->objects.push_back(obj3.get());
 
-    std::unique_ptr<world> world_container = std::make_unique<world>();
-    world_container->objects.push_back(obj1.get());
-    world_container->objects.push_back(obj2.get());
-    world_container->objects.push_back(obj3.get());
+        std::vector<uint8_t> pixels(width * height * channels);
 
-	std::vector<uint8_t> pixels(width * height * channels);
+        std::atomic<int> curr_block(0);
 
-    std::atomic<int> curr_block(0);
+        const int num_threads = std::thread::hardware_concurrency();
+        std::vector<std::thread> threads;
+        std::vector<pcg32> rngs(num_threads);
+        threads.reserve(num_threads);
 
-    const int num_threads = std::thread::hardware_concurrency();
-	std::vector<std::thread> threads;
-    std::vector<pcg32> rngs(num_threads);
-    threads.reserve(num_threads);
+        constexpr int block_size = 16;
+        //const auto start_time = std::chrono::
+        for(int thread_id = 0; thread_id < num_threads; ++thread_id) {
+            // void ThreadFunc(const int thread_id, pcg32 * rng, const int width, const int height, std::atomic<int>* curr_block, world* const world_container, uint8_t* const pixels)
 
-    constexpr int block_size = 16;
-    //const auto start_time = std::chrono::
-	for(int thread_id = 0; thread_id < num_threads; ++thread_id) {
-        // void ThreadFunc(const int thread_id, pcg32 * rng, const int width, const int height, std::atomic<int>* curr_block, world* const world_container, uint8_t* const pixels)
+            threads.push_back(std::thread(ThreadFunc, thread_id, &rngs[thread_id], width, height, &curr_block, world_container.get(), &pixels[0]));
+        }
 
-	    threads.push_back(std::thread(ThreadFunc, thread_id, &rngs[thread_id], width, height, &curr_block, world_container.get(), &pixels[0]));
+        for(auto& t : threads){
+            t.join();
+        }
+
+
+        char filename[256];
+        sprintf(filename, "frames/frame%.4d.png", frame);
+        stbi_write_png(filename, width, height, channels, &pixels[0], width * channels);
+        printf("wrote %s\n", filename);
     }
-
-	for(auto& t : threads){
-	    t.join();
-	}
-
-	stbi_write_png("rt.png", width, height, channels, &pixels[0], width * channels);
 
 	return 0;
 }
