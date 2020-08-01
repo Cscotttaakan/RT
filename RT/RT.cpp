@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <vector>
 #include <iostream>
+#include <thread>
 
 #include "vector.h"
 #include "pcg32.h"
@@ -68,8 +69,8 @@ struct sphere : public scene_object
         //Find length from ray origin to sphere origin
         //Set ray origin is world origin
 
-        const auto Or = r.o;
-        const auto Os = m_origin;
+        const auto Or = r.o - m_origin;
+        const auto Os = m_origin - m_origin;
         const auto OrOs = Os - Or;
 
         //Take dot product ray direction, to get component length, or length from Or to midpoint B
@@ -256,40 +257,66 @@ int main(int argc, char* argv[])
 	const int num_samples = 1 << 8;
     constexpr vec3f origin(0,0,0);
     constexpr vec3f default_color(0.5f,0.5f,0.5f);
-	const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(3.0f, origin, default_color);
+	const std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(3.0f, vec3f{1.0f,1.0f,1.0f}, default_color);
 
 	//pcg32 rng;
     std::unique_ptr<world> world_container = std::make_unique<world>();
     world_container->objects.push_back(obj1.get());
 
 	uint8_t* const pixels = new uint8_t[width * height * channels];
+    std::atomic<int> curr_block(0);
+	const int num_threads = std::thread::hardware_concurrency();
+	std::vector<std::thread> threads;
+	threads.reserve(num_threads);
+	constexpr int block_size = 16;
+    const auto start_time = std::chrono::
+	for(int thread_id = 0; thread_id < num_threads; ++thread_id) {
+	    threads.push_back(std::thread([&]() {
+	        //Initialize blocks
+            while(true) {
+                constexpr int x_blocks = (width + block_size - 1) / block_size; // Round up the number of blocks.
+                constexpr int y_blocks = (height + block_size - 1) / block_size;
 
-	#pragma omp parallel for
-	for (int j = 0; j < height; ++j)
-	{
-		for (int i = 0; i < width; ++i)
-		{
-			vec3f sum = 0;
-			for (int s = 0; s < num_samples; ++s)
-			{
-				const vec3f color_linear = raytrace(i, j, s, width, height, world_container.get());
-				sum += color_linear;
-			}
-			const vec3f color_linear = sum / num_samples;
+                const int block_idx = curr_block.fetch_add(1);
 
-			const vec3f color_gamma(
-				powf(color_linear.x(), 1 / 2.2f),
-				powf(color_linear.y(), 1 / 2.2f),
-				powf(color_linear.z(), 1 / 2.2f));
+                if (block_idx >= x_blocks * y_blocks)
+                    return;
 
-			const int ir = std::max(0, std::min(255, int(256 * color_gamma.x())));
-			const int ig = std::max(0, std::min(255, int(256 * color_gamma.y())));
-			const int ib = std::max(0, std::min(255, int(256 * color_gamma.z())));
-			const int index = width * j + i;
-			pixels[index * 3 + 0] = ir;
-			pixels[index * 3 + 1] = ig;
-			pixels[index * 3 + 2] = ib;
-		}
+
+                const int block_y  = block_idx / x_blocks;
+                const int block_x  = block_idx - x_blocks * block_y; // Equiv to block_idx % x_blocks.
+                const int block_x0 = block_x * block_size, block_x1 = std::min(block_x0 + block_size, width);
+                const int block_y0 = block_y * block_size, block_y1 = std::min(block_y0 + block_size, height);
+
+                for (int j = block_x0; j < block_x1; ++j) {
+                    for (int i = block_y0; i < block_y1; ++i) {
+                        vec3f sum = 0;
+                        for (int s = 0; s < num_samples; ++s) {
+                            const vec3f color_linear = raytrace(i, j, s, width, height, world_container.get());
+                            sum += color_linear;
+                        }
+                        const vec3f color_linear = sum / num_samples;
+
+                        const vec3f color_gamma(
+                                powf(color_linear.x(), 1 / 2.2f),
+                                powf(color_linear.y(), 1 / 2.2f),
+                                powf(color_linear.z(), 1 / 2.2f));
+
+                        const int ir = std::max(0, std::min(255, int(256 * color_gamma.x())));
+                        const int ig = std::max(0, std::min(255, int(256 * color_gamma.y())));
+                        const int ib = std::max(0, std::min(255, int(256 * color_gamma.z())));
+                        const int index = width * j + i;
+                        pixels[index * 3 + 0] = ir;
+                        pixels[index * 3 + 1] = ig;
+                        pixels[index * 3 + 2] = ib;
+                    }
+                }
+            }
+        }));
+    }
+
+	for(auto& t : threads){
+	    t.join();
 	}
 
 	stbi_write_png("rt.png", width, height, channels, pixels, width * channels);
