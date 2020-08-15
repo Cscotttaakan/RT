@@ -195,6 +195,11 @@ vec3f raytrace(const int pixel_x, const int pixel_y, const int sample_idx, int w
 	return 0;
 }
 
+double chooseRandWavelength(){
+    double f = (double)rand() / RAND_MAX;
+    return wavelength_min + f * (wavelength_max - wavelength_min);
+}
+
 
 vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int width, int height, const world * const world_ptr, pcg32 * rng)
 {
@@ -206,7 +211,6 @@ vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int 
         vec2f(
             randomized_halton(sample_idx, 0, pixel_idx),
             randomized_halton(sample_idx, 1, pixel_idx));
-
     const vec3f pinhole_pos{ 10.0f,8.0f,10.0f };
     vec3f camera_dir = -pinhole_pos + vec3f{ 0, 3, 0};
     camera_dir.normalize();
@@ -222,12 +226,13 @@ vec3f pathtrace(const int pixel_x, const int pixel_y, const int sample_idx, int 
     const vec3f sensor_dir = sensor_pos - pinhole_pos;
 
     ray r = { sensor_pos, sensor_dir * (1 / sensor_dir.magnitude()) };
+
+    const double wavelength = chooseRandWavelength();
+
     spectrum radiance = 0;
     spectrum throughput = 1;
-    int dim = 2;
 
-    if (pixel_x == width / 2 && pixel_y == height / 2)
-        int blahhhhh = 666;
+    int dim = 2;
 
     for (int i = 0; i < max_bounces; ++i)
     {
@@ -350,7 +355,12 @@ void ThreadFunc(const int thread_id, pcg32 * rng, const int width, const int hei
                 const vec3f color_linear = pathtrace(i, j, s, width, height, world_container, rng);
                 sum += color_linear;
             }
+            if(j < height / 6) {
+            const vec3f wavelength_color = spectrum::xyz2rgb(spectrum::wavelength2xyz(wavelength_min + (static_cast<double>(i)/width) * (wavelength_max - wavelength_min)));
+            sum += wavelength_color * num_samples;
+            }
             const vec3f color_linear = sum / num_samples;
+            //const vec3f color_linear = spectrum::xyz2rgb(color_xyz);
 
             const vec3f color_gamma(
                 powf(color_linear.x(), 1 / 2.2f),
@@ -381,7 +391,7 @@ int main(int argc, char* argv[])
     //std::unique_ptr<sphere>
 
 
-    const int num_frames = 30;
+    const int num_frames = 1;
 
     for (int frame = 0; frame < num_frames; ++frame)
     {
@@ -445,7 +455,7 @@ int main(int argc, char* argv[])
 
 
         char filename[256];
-        sprintf(filename, "frames/frame%.4d.png", frame);
+        sprintf(filename, "frame%.4d.png", frame);
         stbi_write_png(filename, width, height, channels, &pixels[0], width * channels);
         printf("wrote %s\n", filename);
     }
