@@ -54,6 +54,10 @@ struct spectrum
         return std::move(color);
 	}
 
+	static vec3f rgb2wavelength(const vec3f& rgb){
+
+	}
+
     static float xFit_1931( float wave )
     {
         float t1 = (wave-442.0f)*((wave<442.0f)?0.0624f:0.0374f);

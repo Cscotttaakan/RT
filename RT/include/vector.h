@@ -97,6 +97,6 @@ vector3<TScalarType> cross(const vector3<TScalarType>& a, const vector3<TScalarT
 
 using vec2f = vector2<float>;
 using vec3f = vector3<float>;
-
+using vec3i = vector3<int>;
 using vec2d = vector2<double>;
 using vec3d = vector3<double>;
