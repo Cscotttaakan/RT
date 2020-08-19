@@ -21,7 +21,6 @@
 
 constexpr float float_pi = 3.1415926535897932384626433832795f;
 constexpr float float_twopi = 6.283185307179586476925286766559f;
-constexpr float ray_eps = 5e-5f;
 constexpr vec3f world_up = { 0, 1, 0 };
 
 namespace intersect {
@@ -264,6 +263,12 @@ int main(int argc, char* argv[])
 
     for (int frame = 0; frame < num_frames; ++frame)
     {
+        std::vector<tri_mesh> meshes = tri_mesh::load_objs("teapot.obj");
+        auto load_world_with_tri_mesh = [](world* container, std::vector<tri_mesh>* meshes){
+            for(auto mesh : *meshes){
+                container->objects.push_back(&mesh);
+            }
+        };
         std::unique_ptr<sphere> obj1 = std::make_unique<sphere>(
             spectrum{0.85f, 0.25f, 0.05f}, // albedo
             spectrum{0.0f}, // emission
@@ -297,10 +302,10 @@ int main(int argc, char* argv[])
         obj2->mirror = true;
 
         std::unique_ptr<world> world_container = std::make_unique<world>();
-        world_container->objects.push_back(obj1.get());
-        world_container->objects.push_back(obj2.get());
+        //world_container->objects.push_back(obj1.get());
+        //world_container->objects.push_back(obj2.get());
         world_container->objects.push_back(obj3.get());
-
+        load_world_with_tri_mesh(world_container.get(), &meshes);
         std::vector<uint8_t> pixels(width * height * channels);
 
         std::atomic<int> curr_block(0);
